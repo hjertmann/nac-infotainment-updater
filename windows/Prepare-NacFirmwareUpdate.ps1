@@ -72,7 +72,7 @@ function Write-Info    { param($Msg) Write-Host "[INFO] $Msg" -ForegroundColor C
 function Write-Ok      { param($Msg) Write-Host "[ OK ] $Msg" -ForegroundColor Green }
 function Write-Warn    { param($Msg) Write-Host "[WARN] $Msg" -ForegroundColor Yellow }
 function Write-Err     { param($Msg) Write-Host "[ERR ] $Msg" -ForegroundColor Red }
-function Write-Header  { param($Msg) Write-Host "`n── $Msg ──`n" -ForegroundColor Cyan }
+function Write-Header  { param($Msg) Write-Host "`n-- $Msg --`n" -ForegroundColor Cyan }
 
 # ── UIN Prompt ─────────────────────────────────────────────────────────────
 function Get-Uin {
@@ -121,12 +121,12 @@ function Select-UsbDrive {
         $_.MediaType -eq 'Removable' -or $_.Size -lt 256GB
     }
 
-    if (-not $usbDrives -or $usbDrives.Count -eq 0) {
+    if (-not $usbDrives -or @($usbDrives).Count -eq 0) {
         # Fallback: show all USB bus devices
         $usbDrives = Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 }
     }
 
-    if (-not $usbDrives -or $usbDrives.Count -eq 0) {
+    if (-not $usbDrives -or @($usbDrives).Count -eq 0) {
         Write-Err "No USB drives detected. Make sure your USB drive is plugged in."
         exit 1
     }
@@ -136,18 +136,18 @@ function Select-UsbDrive {
     $i = 1
     foreach ($d in $usbDrives) {
         $sizeGb = [math]::Round($d.Size / 1GB, 1)
-        Write-Host "  $i) Disk $($d.Number): $($d.FriendlyName)  ($sizeGb GB)" -ForegroundColor White
+        Write-Host "  $i Disk $($d.Number): $($d.FriendlyName)  ($sizeGb) GB" -ForegroundColor White
         $i++
     }
     Write-Host ""
 
-    if ($usbDrives.Count -eq 1) {
+    if (@($usbDrives).Count -eq 1) {
         $selected = $usbDrives[0]
         Write-Info "Only one USB drive found: Disk $($selected.Number)"
     } else {
         $choice = Read-Host "Select drive number"
         $idx = [int]$choice - 1
-        if ($idx -lt 0 -or $idx -ge $usbDrives.Count) {
+        if ($idx -lt 0 -or $idx -ge @($usbDrives).Count) {
             Write-Err "Invalid selection."
             exit 1
         }
@@ -163,7 +163,7 @@ function Select-UsbDrive {
 
     $sizeGb = [math]::Round($selected.Size / 1GB, 1)
     Write-Host ""
-    Write-Warn "Selected: Disk $($selected.Number) — $($selected.FriendlyName) ($sizeGb GB)"
+    Write-Warn "Selected: Disk $($selected.Number) - $($selected.FriendlyName) ($sizeGb) GB"
     Write-Warn "ALL DATA ON THIS DRIVE WILL BE ERASED!"
     Write-Host ""
     $confirm = Read-Host "Type 'YES' to confirm"
@@ -185,8 +185,17 @@ function Format-UsbDrive {
     # Clear the disk and create MBR + single FAT32 partition
     Clear-Disk -Number $Disk.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
 
-    Write-Info "Initializing with MBR partition table..."
-    Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    Start-Sleep -Seconds 2
+    Update-StorageProviderCache
+
+    $currentDisk = Get-Disk -Number $Disk.Number
+    if ($currentDisk.PartitionStyle -ne 'RAW') {
+        Write-Info "Disk is already initialized. Converting to MBR..."
+        Set-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    } else {
+        Write-Info "Initializing with MBR partition table..."
+        Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    }   
 
     Write-Info "Creating FAT32 partition..."
     $partition = New-Partition -DiskNumber $Disk.Number -UseMaximumSize -IsActive -AssignDriveLetter
@@ -210,7 +219,7 @@ function Format-UsbDrive {
             $dpScript = @"
 select disk $($Disk.Number)
 clean
-create partition primary
+create partition primary size=32768
 select partition 1
 active
 format fs=fat32 quick label=NAC_UPDATE
@@ -220,12 +229,12 @@ assign letter=$driveLetter
         }
     }
 
-    Write-Ok "Drive formatted as FAT32 (MBR) — drive letter ${driveLetter}:"
+    Write-Ok "Drive formatted as FAT32 (MBR) - drive letter ${driveLetter}:"
     return "${driveLetter}:"
 }
 
 # ── Download with auto-resume ──────────────────────────────────────────────
-function Download-WithResume {
+function Save-WithResume {
     param(
         [string]$Url,
         [string]$Dest,
@@ -287,7 +296,7 @@ function Download-WithResume {
                     if (($now - $lastReport).TotalSeconds -ge 2) {
                         $pct = if ($expectedTotal -gt 0) { [math]::Round(($totalRead / $expectedTotal) * 100, 1) } else { 0 }
                         $dlMb = [math]::Round($totalRead / 1MB)
-                        Write-Progress -Activity "Downloading firmware" -Status "$dlMb MB downloaded ($pct%)" -PercentComplete ([math]::Min($pct, 100))
+                        Write-Progress -Activity "Downloading firmware" -Status "$dlMb MB downloaded ($pct)%" -PercentComplete ([math]::Min($pct, 100))
                         $lastReport = $now
                     }
                 }
@@ -331,7 +340,7 @@ function Download-WithResume {
                         if (($now - $lastReport).TotalSeconds -ge 2) {
                             $pct = if ($expectedTotal -gt 0) { [math]::Round(($totalRead / $expectedTotal) * 100, 1) } else { 0 }
                             $dlMb = [math]::Round($totalRead / 1MB)
-                            Write-Progress -Activity "Downloading firmware" -Status "$dlMb MB downloaded ($pct%)" -PercentComplete ([math]::Min($pct, 100))
+                            Write-Progress -Activity "Downloading firmware" -Status "$dlMb MB downloaded ($pct)%" -PercentComplete ([math]::Min($pct, 100))
                             $lastReport = $now
                         }
                     }
@@ -349,7 +358,7 @@ function Download-WithResume {
                 if ($finalSize -gt 1000000000) {
                     return $true
                 } else {
-                    Write-Warn "File too small ($finalSize bytes). Retrying..."
+                    Write-Warn "File too small ($finalSize) bytes. Retrying..."
                 }
             }
         } catch {
@@ -364,12 +373,12 @@ function Download-WithResume {
     return $false
 }
 
-function Download-Firmware {
+function Save-Firmware {
     param([string]$Dest)
 
     Write-Header "Downloading Firmware"
     Write-Info "Version:  $FirmwareVersion"
-    Write-Info "Size:     ~5.9 GB ($ExpectedSize bytes)"
+    Write-Info "Size:     ~5.9 GB ($ExpectedSize) bytes"
     Write-Info "Download will auto-resume if the connection drops."
     Write-Host ""
 
@@ -377,7 +386,7 @@ function Download-Firmware {
     if (Test-Path $Dest) {
         $existing = (Get-Item $Dest).Length
         if ($existing -eq $ExpectedSize) {
-            Write-Ok "File already fully downloaded ($ExpectedSize bytes)."
+            Write-Ok "File already fully downloaded ($ExpectedSize) bytes."
             return
         } elseif ($existing -gt 0) {
             $existingMb = [math]::Round($existing / 1MB)
@@ -389,7 +398,7 @@ function Download-Firmware {
     Write-Host "  $FirmwareUrl"
     Write-Host ""
 
-    if (Download-WithResume -Url $FirmwareUrl -Dest $Dest -ExpSize $ExpectedSize) {
+    if (Save-WithResume -Url $FirmwareUrl -Dest $Dest -ExpSize $ExpectedSize) {
         Write-Ok "Download complete."
         return
     }
@@ -398,7 +407,7 @@ function Download-Firmware {
     foreach ($url in $FallbackUrls) {
         if (Test-Path $Dest) { Remove-Item $Dest -Force }
         Write-Info "Trying: $url"
-        if (Download-WithResume -Url $url -Dest $Dest -ExpSize $ExpectedSize) {
+        if (Save-WithResume -Url $url -Dest $Dest -ExpSize $ExpectedSize) {
             Write-Ok "Download complete."
             return
         }
@@ -424,7 +433,7 @@ function Test-Firmware {
     Write-Info "File size: $size bytes"
 
     if ($size -eq $ExpectedSize) {
-        Write-Ok "Size matches the known-good version ($ExpectedSize bytes)."
+        Write-Ok "Size matches the known-good version ($ExpectedSize) bytes."
     } elseif ($size -eq 6312210432) {
         Write-Host ""
         Write-Err "THIS IS THE BROKEN CLOUDFRONT FILE!"
@@ -439,10 +448,10 @@ function Test-Firmware {
         Write-Warn "Could be a newer upload. Proceeding."
     }
 
-    # Basic tar check — Windows 10 1803+ has tar.exe built in
+    # Basic tar check - Windows 10 1803+ has tar.exe built in
     Write-Info "Checking archive integrity..."
-    $tarCheck = & tar.exe tf $Path 2>&1 | Select-Object -First 5
-    if ($LASTEXITCODE -ne 0) {
+    $tarCheck = & tar.exe tf $Path 2>&1 
+    if ($LASTEXITCODE -ne 0 -or $tarCheck.Count -lt 5) {
         Write-Err "Archive appears corrupted. Re-download it."
         exit 1
     }
@@ -486,7 +495,7 @@ function Get-License {
             $content = Get-Content $tmpLicense -Raw -ErrorAction SilentlyContinue
             if ($content -match '"errorCode"' -or $content -match '"file":null') {
                 Write-Warn "Server returned an error. License not available."
-                Write-Warn "Proceeding WITHOUT license — car must have internet!"
+                Write-Warn "Proceeding WITHOUT license - car must have internet!"
                 Remove-Item $tmpLicense -Force -ErrorAction SilentlyContinue
                 return $false
             }
@@ -494,7 +503,7 @@ function Get-License {
             Write-Ok "License downloaded."
         } catch {
             Write-Warn "Download failed: $($_.Exception.Message)"
-            Write-Warn "Proceeding WITHOUT license — car must have internet!"
+            Write-Warn "Proceeding WITHOUT license - car must have internet!"
             return $false
         }
     }
@@ -612,7 +621,7 @@ if ($TarFile) {
     Write-Info "Using provided file: $tarPath"
 } else {
     $tarPath = Join-Path $env:TEMP $FirmwareFilename
-    Download-Firmware -Dest $tarPath
+    Save-Firmware -Dest $tarPath
 }
 
 Test-Firmware -Path $tarPath

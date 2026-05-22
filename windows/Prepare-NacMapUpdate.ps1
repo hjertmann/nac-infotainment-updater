@@ -55,7 +55,7 @@ function Write-Info    { param($Msg) Write-Host "[INFO] $Msg" -ForegroundColor C
 function Write-Ok      { param($Msg) Write-Host "[ OK ] $Msg" -ForegroundColor Green }
 function Write-Warn    { param($Msg) Write-Host "[WARN] $Msg" -ForegroundColor Yellow }
 function Write-Err     { param($Msg) Write-Host "[ERR ] $Msg" -ForegroundColor Red }
-function Write-Header  { param($Msg) Write-Host "`n── $Msg ──`n" -ForegroundColor Cyan }
+function Write-Header  { param($Msg) Write-Host "`n-- $Msg --`n" -ForegroundColor Cyan }
 
 # ── Firmware prerequisite check ────────────────────────────────────────────
 function Test-FirmwarePrerequisite {
@@ -100,7 +100,7 @@ function Select-UsbDrive {
         ($_.BusType -eq 'USB') -and ($_.Size -gt 0)
     } | Sort-Object Number
 
-    if (-not $usbDrives -or $usbDrives.Count -eq 0) {
+    if (-not $usbDrives -or @($usbDrives).Count -eq 0) {
         Write-Err "No USB drives detected. Make sure your USB drive is plugged in."
         exit 1
     }
@@ -117,18 +117,18 @@ function Select-UsbDrive {
             $sizeNote = " (TOO SMALL for maps!)"
             $tooSmall += $d.Number
         }
-        Write-Host "  $i) Disk $($d.Number): $($d.FriendlyName)  ($sizeGb GB)$sizeNote" -ForegroundColor White
+        Write-Host "  $i) Disk $($d.Number): $($d.FriendlyName)  ($sizeGb) GB $sizeNote" -ForegroundColor White
         $i++
     }
     Write-Host ""
 
-    if ($usbDrives.Count -eq 1) {
+    if (@($usbDrives).Count -eq 1) {
         $selected = $usbDrives[0]
         Write-Info "Only one USB drive found: Disk $($selected.Number)"
     } else {
         $choice = Read-Host "Select drive number"
         $idx = [int]$choice - 1
-        if ($idx -lt 0 -or $idx -ge $usbDrives.Count) {
+        if ($idx -lt 0 -or $idx -ge @($usbDrives).Count) {
             Write-Err "Invalid selection."
             exit 1
         }
@@ -147,7 +147,7 @@ function Select-UsbDrive {
 
     $sizeGb = [math]::Round($selected.Size / 1GB, 1)
     Write-Host ""
-    Write-Warn "Selected: Disk $($selected.Number) - $($selected.FriendlyName) ($sizeGb GB)"
+    Write-Warn "Selected: Disk $($selected.Number) - $($selected.FriendlyName) ($sizeGb) GB"
     Write-Warn "ALL DATA ON THIS DRIVE WILL BE ERASED!"
     Write-Host ""
     $confirm = Read-Host "Type 'YES' to confirm"
@@ -166,10 +166,20 @@ function Format-UsbDrive {
     Write-Header "Formatting USB Drive as FAT32"
 
     Write-Info "Cleaning disk $($Disk.Number)..."
+    # Clear the disk and create MBR + single FAT32 partition
     Clear-Disk -Number $Disk.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
 
-    Write-Info "Initializing with MBR partition table..."
-    Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    Start-Sleep -Seconds 2
+    Update-StorageProviderCache
+
+    $currentDisk = Get-Disk -Number $Disk.Number
+    if ($currentDisk.PartitionStyle -ne 'RAW') {
+        Write-Info "Disk is already initialized. Converting to MBR..."
+        Set-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    } else {
+        Write-Info "Initializing with MBR partition table..."
+        Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    }   
 
     Write-Info "Creating FAT32 partition..."
     $partition = New-Partition -DiskNumber $Disk.Number -UseMaximumSize -IsActive -AssignDriveLetter
@@ -188,7 +198,7 @@ function Format-UsbDrive {
             $dpScript = @"
 select disk $($Disk.Number)
 clean
-create partition primary
+create partition primary size=32768
 select partition 1
 active
 format fs=fat32 quick label=NAC_MAP
@@ -203,7 +213,7 @@ assign letter=$driveLetter
 }
 
 # ── Download with auto-resume ──────────────────────────────────────────────
-function Download-WithResume {
+function Save-WithResume {
     param(
         [string]$Url,
         [string]$Dest,
@@ -255,7 +265,7 @@ function Download-WithResume {
                     if (($now - $lastReport).TotalSeconds -ge 2) {
                         $pct = if ($expectedTotal -gt 0) { [math]::Round(($totalRead / $expectedTotal) * 100, 1) } else { 0 }
                         $dlMb = [math]::Round($totalRead / 1MB)
-                        Write-Progress -Activity "Downloading maps" -Status "$dlMb MB downloaded ($pct%)" -PercentComplete ([math]::Min($pct, 100))
+                        Write-Progress -Activity "Downloading maps" -Status "$dlMb MB downloaded ($pct)%" -PercentComplete ([math]::Min($pct, 100))
                         $lastReport = $now
                     }
                 }
@@ -294,7 +304,7 @@ function Download-WithResume {
                         if (($now - $lastReport).TotalSeconds -ge 2) {
                             $pct = if ($expectedTotal -gt 0) { [math]::Round(($totalRead / $expectedTotal) * 100, 1) } else { 0 }
                             $dlMb = [math]::Round($totalRead / 1MB)
-                            Write-Progress -Activity "Downloading maps" -Status "$dlMb MB downloaded ($pct%)" -PercentComplete ([math]::Min($pct, 100))
+                            Write-Progress -Activity "Downloading maps" -Status "$dlMb MB downloaded ($pct)%" -PercentComplete ([math]::Min($pct, 100))
                             $lastReport = $now
                         }
                     }
@@ -321,7 +331,7 @@ function Download-WithResume {
     return $false
 }
 
-function Download-Map {
+function Save-Map {
     param([string]$Dest)
 
     Write-Header "Downloading European Map"
@@ -334,7 +344,7 @@ function Download-Map {
     if (Test-Path $Dest) {
         $existing = (Get-Item $Dest).Length
         if ($existing -eq $ExpectedSize) {
-            Write-Ok "File already fully downloaded ($ExpectedSize bytes)."
+            Write-Ok "File already fully downloaded ($ExpectedSize) bytes."
             return
         } elseif ($existing -gt 0) {
             $existingMb = [math]::Round($existing / 1MB)
@@ -346,7 +356,7 @@ function Download-Map {
     Write-Host "  $MapUrl"
     Write-Host ""
 
-    if (Download-WithResume -Url $MapUrl -Dest $Dest -ExpSize $ExpectedSize) {
+    if (Save-WithResume -Url $MapUrl -Dest $Dest -ExpSize $ExpectedSize) {
         Write-Ok "Download complete."
         return
     }
@@ -355,7 +365,7 @@ function Download-Map {
     foreach ($url in $FallbackUrls) {
         if (Test-Path $Dest) { Remove-Item $Dest -Force }
         Write-Info "Trying: $url"
-        if (Download-WithResume -Url $url -Dest $Dest -ExpSize $ExpectedSize) {
+        if (Save-WithResume -Url $url -Dest $Dest -ExpSize $ExpectedSize) {
             Write-Ok "Download complete."
             return
         }
@@ -378,14 +388,14 @@ function Test-MapFile {
     Write-Info "File size: $size bytes"
 
     if ($size -eq $ExpectedSize) {
-        Write-Ok "Size matches expected ($ExpectedSize bytes)."
+        Write-Ok "Size matches expected ($ExpectedSize) bytes."
     } else {
         Write-Warn "Size $size doesn't match expected $ExpectedSize. Could be a re-upload."
     }
 
     Write-Info "Checking archive integrity (this may take a moment for 19 GB)..."
-    $tarCheck = & tar.exe tf $Path 2>&1 | Select-Object -First 5
-    if ($LASTEXITCODE -ne 0) {
+    $tarCheck = & tar.exe tf $Path 2>&1 
+    if ($LASTEXITCODE -ne 0 -or $tarCheck.Count -lt 5) {
         Write-Err "Archive appears corrupted. Re-download it."
         exit 1
     }
@@ -487,7 +497,7 @@ if ($TarFile) {
     Write-Info "Using provided file: $tarPath"
 } else {
     $tarPath = Join-Path $env:TEMP $MapFilename
-    Download-Map -Dest $tarPath
+    Save-Map -Dest $tarPath
 }
 
 Test-MapFile -Path $tarPath
