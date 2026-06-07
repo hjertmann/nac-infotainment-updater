@@ -391,7 +391,9 @@ validate_map() {
         exit 1
     fi
 
-    if $TAR_CMD tf "$tar_path" 2>/dev/null | grep -q "SWL/"; then
+    # grep -q exits on the first match, which can make tar report SIGPIPE.
+    # Run this quick structural check without pipefail so a valid SWL/ match wins.
+    if ( set +o pipefail; $TAR_CMD tf "$tar_path" 2>/dev/null | grep -qE '^(\./)?SWL/' ); then
         success "Contains SWL/ directory structure."
     else
         error "No SWL/ directory found. Wrong file?"
