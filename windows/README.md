@@ -11,7 +11,7 @@ These scripts exist because the official Citroën/Peugeot/DS/Opel Update apps fr
 | Script | What it does |
 |---|---|
 | `Prepare-NacFirmwareUpdate.ps1` | Downloads and prepares firmware **44.07.33.32_NAC-r0** (latest NAC Wave 4 firmware, ~5.9 GB) |
-| `Prepare-NacMapUpdate.ps1` | Downloads and prepares European map **17.0.0-r0** (latest cartography, ~19 GB) |
+| `Prepare-NacMapUpdate.ps1` | Downloads and prepares European map **20.0.0-r0** (latest cartography, ~17.7 GB) |
 
 **Always install firmware first, then maps.** The map update requires Wave 4 firmware.
 
@@ -178,6 +178,37 @@ Same flow, but for the European cartography (~19 GB). No UIN or license needed f
 
 ---
 
+## Windows-Specific Fixes (2026-07)
+
+`Prepare-NacFirmwareUpdate.ps1` was tested end-to-end on a real vehicle (DS 7 Crossback, upgrading `40.04.20.22_NAC-r0` → `44.07.33.32_NAC-r0`, Windows 10, PowerShell 5.1) and confirmed working. Along the way, four bugs specific to Windows PowerShell were found and fixed:
+
+1. **Script wouldn't parse at all** — the file's em-dash (`—`) characters were misread by Windows PowerShell 5.1's default codepage when the file had no BOM, corrupting string literals and causing "Unexpected token" parse errors. Fixed by saving the script as UTF-8 **with BOM**.
+2. **Single-USB-drive auto-select never triggered** — `$usbDrives.Count -eq 1` was unreliable when `Where-Object` returned a single scalar object instead of an array, sending the flow into the manual-selection prompt and then rejecting a valid `1` due to the same issue affecting the bounds check. Fixed by forcing array context with `@(...)` around the drive-selection pipelines.
+3. **False "Archive appears corrupted" error** — piping `tar.exe tf` through `Select-Object -First 5` could cause PowerShell to close the pipe early, making `tar.exe` exit non-zero even on a perfectly valid archive. Fixed by capturing the full output before checking `$LASTEXITCODE`/filtering.
+4. **`Initialize-Disk` failing with "The disk has already been initialized"** — immediately after `Clear-Disk`, some USB controllers report the disk as still having its old partition style for a moment. Fixed by re-checking the disk's `PartitionStyle` after a short delay and only calling `Initialize-Disk` when it's genuinely `RAW`.
+
+The same 4 fixes were also applied to `Prepare-NacMapUpdate.ps1`, which shares the same code paths.
+
+### Map version bump: 17.0.0-r0 → 20.0.0-r0
+
+See [issue #1](https://github.com/hjertmann/nac-infotainment-updater/issues/1) — the script was still targeting map-eur `17.0.0-r0` (Nov 2024), but the official DS/Peugeot/Citroën Update app catalog now lists `20.0.0-r0` as the current cartography. Verified with a HEAD request against TomTom's CDN using the same URL pattern:
+
+- `20.0.0-r0`: `https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_20.0.0-r0-NAC_EUR_WAVE4.tar` — HTTP 200, 18,953,697,280 bytes
+- `17.0.0-r0` (old): still resolves too (HTTP 200, 20,403,312,640 bytes), kept as a fallback URL in case `20.0.0-r0` is ever pulled
+
+The script now targets `20.0.0-r0` by default.
+
+### Confirmed working — screenshots
+
+USB was prepared with this fixed script (firmware only, `-Uin` supplied, full format), taken to the car, and the update completed successfully:
+
+1. [Update prompt on the NAC screen](testing-evidence/01-update-prompt.jpg) — confirms the correct UpdateID (`001315031692686757`)
+2. [Firmware update in progress](testing-evidence/02-firmware-update-in-progress.jpg) — "Do not switch off the ignition! Do not remove the USB stick!"
+3. [Firmware update successful](testing-evidence/03-firmware-update-successful.jpg)
+4. [System Information confirming the new version](testing-evidence/04-system-info-confirmed-44.07.33.32.jpg) — `44.07.33.32_NAC-r0`
+
+---
+
 ## Troubleshooting
 
 ### "Version not compatible with hardware"
@@ -226,7 +257,7 @@ To download manually, open PowerShell and run:
 Start-BitsTransfer -Source "https://majestic-web.mpsa.com/nas/eu/mjb00/PSA/mjbsu/PSA_ovip-int-firmware-version_44-07-33-32_NAC-r0_NAC_EUR_WAVE4.tar" -Destination "$env:USERPROFILE\Downloads\firmware.tar"
 
 # Maps:
-Start-BitsTransfer -Source "https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar" -Destination "$env:USERPROFILE\Downloads\maps.tar"
+Start-BitsTransfer -Source "https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_20.0.0-r0-NAC_EUR_WAVE4.tar" -Destination "$env:USERPROFILE\Downloads\maps.tar"
 ```
 
 Then pass them to the scripts with `-TarFile "path\to\file.tar"`.

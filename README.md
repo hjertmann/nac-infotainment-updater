@@ -18,7 +18,7 @@ These scripts do what the vendor updater was supposed to do — nothing more. Th
 
 **Tested on:** Citroën C5 Aircross Plug-in Hybrid, upgrading from firmware `42.01.72.32_NAC-r0` to `44.07.33.32_NAC-r0`, using the macOS scripts.
 
-**Windows scripts** are included but have not been tested yet. They implement the same logic as the macOS scripts. Feedback welcome.
+**Windows scripts** have now been tested end-to-end on a DS 7 Crossback, upgrading from `40.04.20.22_NAC-r0` to `44.07.33.32_NAC-r0` (Windows 10/11, PowerShell 5.1). A few Windows-specific bugs were found and fixed in the process — see [windows/README.md](windows/README.md#windows-specific-fixes-2026-07) for details and screenshots of the confirmed working install.
 
 Updating car infotainment systems always carries some risk. Do not turn off the engine during installation.
 
@@ -29,7 +29,7 @@ Updating car infotainment systems always carries some risk. Do not turn off the 
 | Platform | Scripts | Status |
 |---|---|---|
 | [macOS](macos/README.md) | `prepare_nac_update_mac.sh`, `prepare_nac_map_update_mac.sh` | Tested |
-| [Windows](windows/README.md) | `Prepare-NacFirmwareUpdate.ps1`, `Prepare-NacMapUpdate.ps1` | Untested |
+| [Windows](windows/README.md) | `Prepare-NacFirmwareUpdate.ps1`, `Prepare-NacMapUpdate.ps1` | Tested (firmware) |
 
 See the platform-specific README for prerequisites, usage, and troubleshooting:
 
