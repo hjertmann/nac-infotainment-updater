@@ -38,13 +38,14 @@ if (-not $isAdmin) {
 }
 
 # ── Configuration ──────────────────────────────────────────────────────────
-$MapVersion   = "17.0.0-r0"
-$MapUrl       = "https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar"
-$MapFilename  = "PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar"
+$MapVersion   = "20.0.0-r0"
+$MapUrl       = "https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_20.0.0-r0-NAC_EUR_WAVE4.tar"
+$MapFilename  = "PSA_map-eur_20.0.0-r0-NAC_EUR_WAVE4.tar"
 $FallbackUrls = @(
-    "http://download.tomtom.com/OEM/PSA/MAP/PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar"
+    "http://download.tomtom.com/OEM/PSA/MAP/PSA_map-eur_20.0.0-r0-NAC_EUR_WAVE4.tar",
+    "https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar"
 )
-$ExpectedSize = 20403312640
+$ExpectedSize = 18953697280
 
 $MaxRetries     = 50
 $RetryDelayBase = 5
