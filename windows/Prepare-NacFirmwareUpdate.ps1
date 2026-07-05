@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     NAC Wave 4 Firmware Update - USB Preparation Script (Windows 10/11)
 
@@ -112,21 +112,21 @@ function Get-Uin {
 function Select-UsbDrive {
     Write-Header "USB Drive Selection"
 
-    $removable = Get-Disk | Where-Object { $_.BusType -eq 'USB' -or $_.BusType -eq 'SCSI' } |
+    $removable = @(Get-Disk | Where-Object { $_.BusType -eq 'USB' -or $_.BusType -eq 'SCSI' } |
         Where-Object { $_.Size -gt 0 } |
-        Sort-Object Number
+        Sort-Object Number)
 
     # Filter to truly removable drives (exclude large external HDDs as safety measure)
-    $usbDrives = $removable | Where-Object {
+    $usbDrives = @($removable | Where-Object {
         $_.MediaType -eq 'Removable' -or $_.Size -lt 256GB
-    }
+    })
 
-    if (-not $usbDrives -or $usbDrives.Count -eq 0) {
+    if ($usbDrives.Count -eq 0) {
         # Fallback: show all USB bus devices
-        $usbDrives = Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 }
+        $usbDrives = @(Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 })
     }
 
-    if (-not $usbDrives -or $usbDrives.Count -eq 0) {
+    if ($usbDrives.Count -eq 0) {
         Write-Err "No USB drives detected. Make sure your USB drive is plugged in."
         exit 1
     }
@@ -185,8 +185,17 @@ function Format-UsbDrive {
     # Clear the disk and create MBR + single FAT32 partition
     Clear-Disk -Number $Disk.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
 
+    # USB controllers can be slow to report the disk as truly uninitialized (RAW)
+    # right after Clear-Disk. Give it a moment and re-check before initializing.
+    Start-Sleep -Seconds 2
+    $diskInfo = Get-Disk -Number $Disk.Number
+
     Write-Info "Initializing with MBR partition table..."
-    Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    if ($diskInfo.PartitionStyle -eq 'RAW') {
+        Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    } else {
+        Write-Info "Disk already has a partition table ($($diskInfo.PartitionStyle)) after clearing — reusing it."
+    }
 
     Write-Info "Creating FAT32 partition..."
     $partition = New-Partition -DiskNumber $Disk.Number -UseMaximumSize -IsActive -AssignDriveLetter
@@ -441,7 +450,7 @@ function Test-Firmware {
 
     # Basic tar check — Windows 10 1803+ has tar.exe built in
     Write-Info "Checking archive integrity..."
-    $tarCheck = & tar.exe tf $Path 2>&1 | Select-Object -First 5
+    $tarCheck = & tar.exe tf $Path 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Err "Archive appears corrupted. Re-download it."
         exit 1
