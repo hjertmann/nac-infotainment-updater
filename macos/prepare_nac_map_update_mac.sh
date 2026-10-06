@@ -5,7 +5,7 @@
 # ============================================================================
 #
 #  Vehicle:   Any PSA/Stellantis with NAC Wave 4 infotainment
-#  Target:    map-eur 17.0.0-r0 (latest European cartography for NAC Wave 4)
+#  Target:    map-eur 21.0.0-r0 (latest European cartography for NAC Wave 4)
 #
 #  NOTE: Map updates do NOT require a license file or UIN.
 #  NOTE: Install the firmware update (44.07.33.32) BEFORE this map update.
@@ -26,19 +26,19 @@
 set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────────────
-MAP_VERSION="17.0.0-r0"
-UPDATE_ID="002315011725520285"
+MAP_VERSION="21.0.0-r0"
+UPDATE_ID="002315011786985407"
 
 # Download URL (TomTom CDN — this is the official source)
-MAP_URL="https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar"
-MAP_FILENAME="PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar"
+MAP_URL="https://download-cde.tomtom.com/OEM/PSA/MAP/PSA_map-eur_21.0.0-r0-NAC_EUR_WAVE4.tar"
+MAP_FILENAME="PSA_map-eur_21.0.0-r0-NAC_EUR_WAVE4.tar"
 
 # Expected size
-EXPECTED_SIZE=20403312640
+EXPECTED_SIZE=19021742080
 
 # Fallback URL (older TomTom domain)
 FALLBACK_URLS=(
-    "http://download.tomtom.com/OEM/PSA/MAP/PSA_map-eur_17.0.0-r0-NAC_EUR_WAVE4.tar"
+    "http://download.tomtom.com/OEM/PSA/MAP/PSA_map-eur_21.0.0-r0-NAC_EUR_WAVE4.tar"
 )
 
 # ── Colors ─────────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ check_dependencies() {
 check_firmware_prerequisite() {
     header "Firmware Prerequisite Check"
 
-    echo "  This map update (17.0.0-r0) requires NAC Wave 4 firmware."
+    echo "  This map update (21.0.0-r0) requires NAC Wave 4 firmware."
     echo "  Compatible firmware versions: 42.x or 44.x (Wave 4)"
     echo ""
     echo "  If you're not sure, check on the NAC screen:"
