@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     NAC Wave 4 Firmware Update - USB Preparation Script (Windows 10/11)
 
@@ -117,16 +117,18 @@ function Select-UsbDrive {
         Sort-Object Number
 
     # Filter to truly removable drives (exclude large external HDDs as safety measure)
-    $usbDrives = $removable | Where-Object {
+    # Wrap in @() so a single match is still an array (Where-Object returns a
+    # scalar for one result, which breaks .Count and index-based selection).
+    $usbDrives = @($removable | Where-Object {
         $_.MediaType -eq 'Removable' -or $_.Size -lt 256GB
-    }
+    })
 
-    if (-not $usbDrives -or $usbDrives.Count -eq 0) {
+    if ($usbDrives.Count -eq 0) {
         # Fallback: show all USB bus devices
-        $usbDrives = Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 }
+        $usbDrives = @(Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.Size -gt 0 })
     }
 
-    if (-not $usbDrives -or $usbDrives.Count -eq 0) {
+    if ($usbDrives.Count -eq 0) {
         Write-Err "No USB drives detected. Make sure your USB drive is plugged in."
         exit 1
     }
@@ -185,8 +187,24 @@ function Format-UsbDrive {
     # Clear the disk and create MBR + single FAT32 partition
     Clear-Disk -Number $Disk.Number -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
 
+    # Clear-Disk can leave the disk initialized; wipe the partition table reliably.
+    $cleanScript = @"
+select disk $($Disk.Number)
+clean
+"@
+    $cleanScript | diskpart.exe | Out-Null
+    Start-Sleep -Seconds 2
+
     Write-Info "Initializing with MBR partition table..."
-    Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    try {
+        Initialize-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction Stop
+    } catch {
+        # Disk may already be initialized (e.g. Windows re-mounted it after the
+        # clean). Fall back to setting the partition style rather than failing
+        # with "The disk has already been initialized".
+        Write-Info "Disk already initialized; ensuring MBR partition style..."
+        Set-Disk -Number $Disk.Number -PartitionStyle MBR -ErrorAction SilentlyContinue
+    }
 
     Write-Info "Creating FAT32 partition..."
     $partition = New-Partition -DiskNumber $Disk.Number -UseMaximumSize -IsActive -AssignDriveLetter
@@ -297,50 +315,44 @@ function Download-WithResume {
                 $response.Close()
                 Write-Progress -Activity "Downloading firmware" -Completed
             } else {
-                # Fresh download: use BITS for better performance and resume
-                $bitsOk = $false
-                try {
-                    Import-Module BitsTransfer -ErrorAction Stop
-                    Start-BitsTransfer -Source $Url -Destination $Dest -DisplayName "NAC Firmware" -Description "Downloading $FirmwareVersion"
-                    $bitsOk = $true
-                } catch {
-                    Write-Warn "BITS transfer failed, falling back to .NET download..."
-                }
+                # Fresh download: use .NET HttpWebRequest streaming directly.
+                # BITS is NOT used here: it requires the server to support HTTP
+                # Range requests, and majestic-web.mpsa.com does not, so
+                # Start-BitsTransfer throws a COMException that can abort the
+                # whole download. Streaming with HttpWebRequest works without
+                # Range support (resume for interrupted downloads is handled by
+                # the $currentSize branch above on the next attempt).
+                $request = [System.Net.HttpWebRequest]::Create($Url)
+                $request.Timeout = 30000
+                $request.ReadWriteTimeout = 120000
+                $request.AllowAutoRedirect = $true
 
-                if (-not $bitsOk) {
-                    # Fallback: .NET download with progress
-                    $request = [System.Net.HttpWebRequest]::Create($Url)
-                    $request.Timeout = 30000
-                    $request.ReadWriteTimeout = 120000
-                    $request.AllowAutoRedirect = $true
+                $response = $request.GetResponse()
+                $stream = $response.GetResponseStream()
+                $fileStream = [System.IO.FileStream]::new($Dest, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
 
-                    $response = $request.GetResponse()
-                    $stream = $response.GetResponseStream()
-                    $fileStream = [System.IO.FileStream]::new($Dest, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+                $buffer = New-Object byte[] 131072
+                $totalRead = 0
+                $expectedTotal = $response.ContentLength
+                $lastReport = Get-Date
 
-                    $buffer = New-Object byte[] 131072
-                    $totalRead = 0
-                    $expectedTotal = $response.ContentLength
-                    $lastReport = Get-Date
+                while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $fileStream.Write($buffer, 0, $read)
+                    $totalRead += $read
 
-                    while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                        $fileStream.Write($buffer, 0, $read)
-                        $totalRead += $read
-
-                        $now = Get-Date
-                        if (($now - $lastReport).TotalSeconds -ge 2) {
-                            $pct = if ($expectedTotal -gt 0) { [math]::Round(($totalRead / $expectedTotal) * 100, 1) } else { 0 }
-                            $dlMb = [math]::Round($totalRead / 1MB)
-                            Write-Progress -Activity "Downloading firmware" -Status "$dlMb MB downloaded ($pct%)" -PercentComplete ([math]::Min($pct, 100))
-                            $lastReport = $now
-                        }
+                    $now = Get-Date
+                    if (($now - $lastReport).TotalSeconds -ge 2) {
+                        $pct = if ($expectedTotal -gt 0) { [math]::Round(($totalRead / $expectedTotal) * 100, 1) } else { 0 }
+                        $dlMb = [math]::Round($totalRead / 1MB)
+                        Write-Progress -Activity "Downloading firmware" -Status "$dlMb MB downloaded ($pct%)" -PercentComplete ([math]::Min($pct, 100))
+                        $lastReport = $now
                     }
-
-                    $fileStream.Close()
-                    $stream.Close()
-                    $response.Close()
-                    Write-Progress -Activity "Downloading firmware" -Completed
                 }
+
+                $fileStream.Close()
+                $stream.Close()
+                $response.Close()
+                Write-Progress -Activity "Downloading firmware" -Completed
             }
 
             # Verify we got something substantial
@@ -441,8 +453,15 @@ function Test-Firmware {
 
     # Basic tar check — Windows 10 1803+ has tar.exe built in
     Write-Info "Checking archive integrity..."
-    $tarCheck = & tar.exe tf $Path 2>&1 | Select-Object -First 5
-    if ($LASTEXITCODE -ne 0) {
+    # Capture the FULL tar output and its exit code first. Piping tar.exe
+    # straight into `Select-Object -First 5` closes the pipe after 5 entries,
+    # so tar then writes to a broken pipe and exits non-zero — which made the
+    # script wrongly report an intact archive as corrupted. Read everything,
+    # record $LASTEXITCODE, then take the first entries from the captured output.
+    $tarOut = & tar.exe tf $Path 2>&1
+    $tarExit = $LASTEXITCODE
+    $tarCheck = $tarOut | Select-Object -First 5
+    if ($tarExit -ne 0) {
         Write-Err "Archive appears corrupted. Re-download it."
         exit 1
     }
@@ -513,9 +532,42 @@ function Expand-ToUsb {
     Write-Header "Extracting Firmware to USB"
     Write-Info "Extracting ~5.9 GB archive. This takes several minutes..."
 
-    & tar.exe xf $TarPath -C $UsbRoot 2>&1 | Where-Object { $_ -notmatch "unknown extended header" }
+    # Drive progress from bytes written, NOT from a pre-count of entries.
+    # Running `tar tf` first would force a full sequential read of the whole
+    # ~5.9 GB archive and roughly double the total time. Instead we run the
+    # extraction in a background job and poll the destination SWL folder size
+    # against the known source archive size.
+    $sourceSize = (Get-Item $TarPath).Length
+    $swlPath = Join-Path $UsbRoot "SWL"
 
-    if (Test-Path (Join-Path $UsbRoot "SWL")) {
+    $job = Start-Job -ScriptBlock {
+        param($TarPath, $UsbRoot)
+        & tar.exe xf $TarPath -C $UsbRoot 2>&1 | Where-Object { $_ -notmatch "unknown extended header" }
+    } -ArgumentList $TarPath, $UsbRoot
+
+    try {
+        while ($job.State -eq 'Running') {
+            $written = 0
+            if (Test-Path $swlPath) {
+                $measure = Get-ChildItem -Path $swlPath -Recurse -File -ErrorAction SilentlyContinue |
+                    Measure-Object -Property Length -Sum
+                if ($measure) { $written = $measure.Sum }
+            }
+            $writtenMb = [math]::Round($written / 1MB)
+            $pct = if ($sourceSize -gt 0) { [math]::Round(($written / $sourceSize) * 100, 1) } else { 0 }
+            # Cap at 99% until tar actually exits.
+            $pct = [math]::Min($pct, 99)
+            Write-Progress -Activity "Extracting firmware" -Status "$writtenMb MB written (~$pct%)" -PercentComplete $pct
+            Start-Sleep -Milliseconds 500
+        }
+    } finally {
+        # Surface any tar output and clean up the job.
+        Receive-Job -Job $job -ErrorAction SilentlyContinue | Out-Null
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        Write-Progress -Activity "Extracting firmware" -Completed
+    }
+
+    if (Test-Path $swlPath) {
         Write-Ok "Extraction complete. SWL\ directory present."
     } else {
         Write-Err "SWL\ directory missing after extraction!"

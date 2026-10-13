@@ -240,6 +240,18 @@ If nothing works:
 3. Reconnect the battery
 4. Start the car and try again
 
+### Windows 11 / PowerShell 5.1 gotchas
+
+The `windows/` scripts were previously **untested** on real hardware. The following issues were hit during an end-to-end run on Windows 11 with PowerShell 5.1 and are now handled by `Prepare-NacFirmwareUpdate.ps1`:
+
+| Symptom | What was happening | Status |
+|---|---|---|
+| Script blocked from running | Windows' execution policy prevents unsigned `.ps1` scripts from running by default | Launch with `powershell -ExecutionPolicy Bypass -File .\Prepare-NacFirmwareUpdate.ps1`, or run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` once |
+| Single USB drive rejected every input | With exactly one USB drive attached, the drive list was a single object instead of an array, so selection failed and no drive could be chosen | Fixed — the drive list is always treated as an array, so a lone USB drive is offered/auto-selected correctly |
+| "The disk has already been initialized" during format | The disk wasn't reliably wiped before `Initialize-Disk`, so initialization threw on an already-initialized disk | Fixed — the disk is now reliably cleaned first and initialization is idempotent (only initializes a RAW disk, otherwise resets the partition style) |
+| Download fails immediately on `majestic-web.mpsa.com` | The fresh download used BITS, which requires HTTP Range support; that server doesn't provide it, so BITS threw a COMException | Fixed — the fresh download no longer depends on BITS; it streams directly (interrupted downloads still auto-resume) |
+| False "archive corrupted — re-download it" report | The `tar` integrity check truncated its own pipe after a few entries, making `tar` exit non-zero on a perfectly intact file (an exact size match is strong evidence the file is fine) | Fixed — the check now reads the full `tar` output and bases the corrupted/OK decision on `tar`'s real exit code |
+
 ---
 
 ## How It Works (Technical Details)
