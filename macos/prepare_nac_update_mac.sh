@@ -312,7 +312,12 @@ download_with_resume() {
             fi
         fi
 
-        if curl "${curl_flags[@]}" "$url" 2>&1; then
+        # Capture curl's exit code directly: reading $? after the if-block
+        # would always give 0, so the exit-33 check below never fired.
+        local curl_exit=0
+        curl "${curl_flags[@]}" "$url" 2>&1 || curl_exit=$?
+
+        if (( curl_exit == 0 )); then
             # curl exited 0 — but double-check we got a plausible file
             local final_size
             final_size=$(get_file_size "$dest" 2>/dev/null || echo 0)
@@ -323,11 +328,11 @@ download_with_resume() {
             fi
         fi
 
-        local curl_exit=$?
-
         # If the server doesn't support range requests, curl -C - exits 33.
-        # In that case, delete the partial file and start over.
-        if [[ $curl_exit -eq 33 ]]; then
+        # majestic-web.mpsa.com advertises "Accept-Ranges: bytes" but answers
+        # Range requests with a full 200 response, so this happens after any
+        # stall. Delete the partial file and start over.
+        if (( curl_exit == 33 )); then
             warn "Server rejected resume. Starting from the beginning..."
             rm -f "$dest"
             delay=$RETRY_DELAY_BASE
@@ -440,7 +445,9 @@ validate_firmware() {
         exit 1
     fi
 
-    if $TAR_CMD tf "$tar_path" 2>/dev/null | grep -q "SWL/"; then
+    # No grep -q: it exits on the first match, tar then dies of SIGPIPE (141)
+    # and with pipefail the whole check fails even though SWL/ is there.
+    if $TAR_CMD tf "$tar_path" 2>/dev/null | grep "SWL/" >/dev/null; then
         success "Contains SWL/ directory structure."
     else
         error "No SWL/ directory found. Wrong file?"
@@ -482,6 +489,14 @@ prepare_license() {
             if head -c 50 "$tmp_license" | grep -q '"errorCode"\|"file":null'; then
                 warn "Server returned an error. License not available for download."
                 warn "Proceeding WITHOUT license — the car must have internet access!"
+                rm -f "$tmp_license"
+                return 1
+            fi
+            # The server sometimes answers 200 with an empty body. A valid
+            # license is an S/MIME signed message (~7 KB).
+            if ! head -c 20 "$tmp_license" | grep "MIME-Version" >/dev/null; then
+                warn "Downloaded license is empty or invalid ($(get_file_size "$tmp_license") bytes)."
+                warn "Re-run the script to try again, or the car must have internet access!"
                 rm -f "$tmp_license"
                 return 1
             fi

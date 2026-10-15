@@ -270,6 +270,17 @@ function Download-WithResume {
                 $request.AllowAutoRedirect = $true
 
                 $response = $request.GetResponse()
+
+                # A server that ignores the Range header answers 200 with the whole
+                # file. Appending that to the partial file would corrupt it.
+                if ($response.StatusCode -ne [System.Net.HttpStatusCode]::PartialContent) {
+                    $response.Close()
+                    Write-Warn "Server rejected resume. Starting from the beginning..."
+                    Remove-Item $Dest -Force
+                    $delay = $RetryDelayBase
+                    continue
+                }
+
                 $stream = $response.GetResponseStream()
                 $fileStream = [System.IO.FileStream]::new($Dest, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write)
 
